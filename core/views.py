@@ -7,16 +7,15 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
-
+from rest_framework.serializers import Serializer
 from core.serializers import UserRegisterSerializer, UserSerializer, TokenSerializer, UserLoginSerializer, \
     UserSendOtpSerializer, UserOtpValidateSerializer, UserChangePassSerializer, \
     UserForgetPassSerializer, TokenGeneralSerializer, KillTokensSerialiser
 from core.models import User, Token
-from core.utils import SMSService
+from core.utils import SMSService, Client
 
 
 class CustomAuthViewSet(ListModelMixin, GenericViewSet):
-
     ACTIONS = {'register': 'register', 'login': 'login', 'logout': 'logout',
                'send_otp': 'send_otp', 'validate_otp': 'validate_otp',
                "change_pass": "change_pass", "forget_pass": "forget_pass",
@@ -51,11 +50,16 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
         else:
             return UserSerializer
 
-    def get_permissions(self):
-        permission_login_required = [
-            self.ACTIONS['logout'], self.ACTIONS['validate_otp'],
-            self.ACTIONS['change_pass'], self.ACTIONS['list_tokens'], self.ACTIONS['kill_tokens']
+    @staticmethod
+    def get_permission_login_required():
+        return [
+            CustomAuthViewSet.ACTIONS['logout'], CustomAuthViewSet.ACTIONS['validate_otp'],
+            CustomAuthViewSet.ACTIONS['change_pass'], CustomAuthViewSet.ACTIONS['list_tokens'],
+            CustomAuthViewSet.ACTIONS['kill_tokens']
         ]
+
+    def get_permissions(self):
+        permission_login_required = CustomAuthViewSet.get_permission_login_required()
         if self.action in permission_login_required:
             return [IsAuthenticated()]
         else:
@@ -64,26 +68,33 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
     def get_serializer_context(self):
         return {'user_id': self.request.user.id}
 
-    @action(methods=['POST'], detail=False, url_name='register',)
+    @action(methods=['POST', 'GET'], detail=False, url_name='register')
     def register(self, request):
+        # if users logged in,  they can not access to this request or page
+        response = self.not_permission_logged_in_user(request)
+        if response is not None:
+            return response
+
         serializer = UserRegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # create user
-        user = User.objects.create_user(serializer.validated_data.get('username'),
-                                        password=serializer.validated_data.get('password'),
-                                        phone=serializer.validated_data.get('phone'))
 
+        # create user
+        username = serializer.validated_data.get('username')
+        password = serializer.validated_data.get('password')
+        phone = serializer.validated_data.get('phone')
+        user = User.objects.create_user(username, password=password, phone=phone)
         user.save()
 
         # create token
-        userAgent = request.META.get('HTTP_USER_AGENT')
-        token = Token.objects.create(user=user, user_agent=userAgent, )
-        # serialize token
-        serializerToken = TokenSerializer(token)
-        return Response(serializerToken.data, status=status.HTTP_200_OK)
+        token = CustomAuthViewSet._createToken(user, request)
+        return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
 
-    @action(methods=['POST'], detail=False, url_name='login')
+    @action(methods=['POST', 'GET'], detail=False, url_name='login')
     def login(self, request):
+        # if users logged in,  they can not access to this request or page
+        response = self.not_permission_logged_in_user(request)
+        if response is not None:
+            return response
 
         serializer = UserLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -92,29 +103,21 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
         password = serializer.validated_data.get('password')
 
         # get user info and check conditions
-
-        user = User.objects.filter(username=username).first()
-        if user is not None and isinstance(user, User) and user.check_password(password):
-            # use login django to login user
-            auth_login(request, user)
-            # create token for each login
-            userAgent = request.META.get('HTTP_USER_AGENT')
-            token = Token.objects.create(user=user, user_agent=userAgent, )
-
-            serializerToken = TokenSerializer(token)
-            return Response(serializerToken.data, status=status.HTTP_200_OK)
-
-        return Response({"Error": "user is not valid"}, status=status.HTTP_400_BAD_REQUEST)
+        user, isLogin = CustomAuthViewSet.login_user(request, username=username, password=password)
+        if isLogin and isinstance(user, User):
+            token = CustomAuthViewSet._createToken(user, request)
+            return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
+        return Response({"Error": "there are not any user with this username and password"}, status=status.HTTP_401_UNAUTHORIZED)
 
     @action(methods=['GET'], detail=False, url_name='logout')
     def logout(self, request):
         if request.user.is_authenticated:
             # remove token for this client and logout
-            userAgent = request.META.get('HTTP_USER_AGENT')
+            userAgent = Client.get_user_agent(request)
             Token.objects.filter(user_id=request.user.pk, user_agent=userAgent).delete()
             auth_logout(request)
             return Response(status=status.HTTP_204_NO_CONTENT)
-        Response("user not login", status=status.HTTP_400_BAD_REQUEST)
+        Response({"Error": "You are not login"}, status=status.HTTP_401_UNAUTHORIZED)
 
     @action(methods=['POST'], detail=False, url_name='send_otp')
     def send_otp(self, request):
@@ -125,7 +128,6 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
 
         user_exists = User.objects.filter(phone=phone).exists()
         if user_exists:
-
             otp_code = CustomAuthViewSet.generate_otp()
             print(f"otp_code {otp_code} ".center(100, "-"))
 
@@ -139,7 +141,7 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
 
             return Response("The message is sent", status=status.HTTP_200_OK)
 
-        return Response({"Error": "there are not a user with this phone"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"Error": "there are not a user with this phone"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
     @action(methods=['POST'], detail=False, url_name='validate_otp')
     def validate_otp(self, request):
@@ -161,14 +163,14 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
 
                     return Response(status=status.HTTP_200_OK)
 
-            return Response('Your code is invalid or it is expired', status=status.HTTP_400_BAD_REQUEST)
+            return Response('Your code is invalid or it is expired', status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
-        return Response("Authentication error", status=status.HTTP_400_BAD_REQUEST)
+        return Response("Authentication error", status=status.HTTP_401_UNAUTHORIZED)
 
     @action(methods=['POST'], detail=False, url_name='change_pass')
     def change_pass(self, request):
         current_user = request.user
-        user_agent = request.META.get('HTTP_USER_AGENT')
+        user_agent = Client.get_user_agent(request)
 
         serializer = UserChangePassSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -180,7 +182,7 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
             token = Token.objects.filter(user=current_user, user_agent=user_agent).order_by('-created').first()
             return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
 
-        return Response({"Error": "password is not correct or user not login"}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"Error": "password is not correct or user not login"}, status=status.HTTP_401_UNAUTHORIZED)
 
     @action(methods=['POST'], detail=False, url_name='forget_pass')
     def forget_pass(self, request):
@@ -190,27 +192,24 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
         # get data
         otp_code = serializer.validated_data.get('otp_code')
         phoneNumber = cache.get(otp_code)
+        password = serializer.validated_data.get("password")
 
         if phoneNumber:
-            user = User.objects.filter(phone=phoneNumber, is_verify_phone=1).first()
-            # check user data and login if data is valid
-            if user is not None and isinstance(user, User):
-                user.set_password(serializer.validated_data.get("password"))
+            user, isLogin = CustomAuthViewSet.login_user(request, phone=phoneNumber, is_verify_phone=1)
+            if isLogin and user is not None and isinstance(user, User):
+
+                # change password
+                user.set_password(password)
                 user.save()
-
-                # login user with django login
-                auth_login(request, user)
-
-                user_agent = request.META.get('HTTP_USER_AGENT')
-                token = Token.objects.create(user=user, user_agent=user_agent)
+                # create token
+                token = CustomAuthViewSet._createToken(user, request)
 
                 return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
 
             return Response({"Error": "there is not any user with this phone number "
                                       "or the phone number is not active"},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        return Response({"Error": "this code is not valid."}, status=status.HTTP_400_BAD_REQUEST)
+                            status=status.HTTP_401_UNAUTHORIZED)
+        return Response({"Error": "this code is not valid."}, status=status.HTTP_408_REQUEST_TIMEOUT)
 
     @action(methods=['GET'], detail=False, url_name='list_tokens')
     def list_tokens(self, request):
@@ -230,15 +229,58 @@ class CustomAuthViewSet(ListModelMixin, GenericViewSet):
         remindedTokens = Token.objects.filter(user_id=request.user.pk)
 
         return Response(TokenSerializer(remindedTokens).data, status=status.HTTP_200_OK)
-
-    @action(methods=['GET'], detail=False, url_name='test')
-    def test(self, request):
-        userAgent = request.META.get('HTTP_USER_AGENT')
-        tkents = Token.objects.filter(user_id=request.user.pk, user_agent=userAgent)
-        tkents.delete()
-        # a = CustomAuthViewSet.generate_otp()
-        return Response(TokenGeneralSerializer(tkents, many=True).data, status=status.HTTP_200_OK)
-
     @staticmethod
     def generate_otp():
         return uuid.uuid4()
+
+    @staticmethod
+    def _createToken(user: User, request) -> Token:
+        if not isinstance(user, User):
+            raise {"Error": "user instance is not valid"}
+        user_agent = Client.get_user_agent(request)
+        token = Token.objects.create(user=user, user_agent=user_agent)
+        return token
+
+    @staticmethod
+    def login_user(request, user=None, username=None, password=None, phone=None, is_verify_phone=None) -> tuple:
+        # login by user
+        if user is not None and isinstance(user, User):
+            auth_login(request, user)
+            return user, True
+
+        # login by phone
+        if phone is not None:
+            if is_verify_phone is not None:
+                user = User.objects.filter(phone=phone, is_verify_phone=is_verify_phone).first()
+            else:
+                user = User.objects.filter(phone=phone).first()
+
+            if user is not None and isinstance(user, User):
+                auth_login(request, user)
+                return user, True
+            return user, False
+
+        # login by username and password
+        isLogin = False
+        if username is not None and password is not None:
+            user = User.objects.filter(username=username).first()
+            if user is not None and isinstance(user, User) and user.check_password(password):
+                isLogin = True
+                auth_login(request, user)
+
+        return user, isLogin
+
+    def not_permission_logged_in_user(self, request, message_get=None, message_post=None):
+        if message_post is None:
+            message_post = "You have already logged in"
+        if message_get is None:
+            message_get = "You can not access to this page"
+
+        if request.method == "GET":
+            if request.user.is_authenticated:
+                self.http_method_names = []
+            return Response({"detail": message_get}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        if request.method == "POST" and request.user.is_authenticated:
+            self.http_method_names = []
+            return Response({"detail": message_post}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
