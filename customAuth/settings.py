@@ -12,6 +12,16 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
+import os
+
+import environ
+BASE_DIR_ENVIRON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+environ.Env.read_env(os.path.join(BASE_DIR_ENVIRON, '.env'))
+env = environ.Env(
+    # set casting, default value
+    DEBUG=(bool, False)
+)
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -85,20 +95,32 @@ WSGI_APPLICATION = 'customAuth.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
 
+# # mysql config
+# DATABASES = {
+#     'default': {
+#         # sqlite
+#         # 'ENGINE': 'django.db.backends.sqlite3',
+#         # 'NAME': BASE_DIR / 'db.sqlite3',
+#         # mysql
+#         'ENGINE': 'django.db.backends.mysql',
+#         'NAME': 'customAuth',
+#         'HOST': 'localhost',
+#         'USER': 'root',
+#         'PASSWORD': 'mlk',
+#     }
+# }
+
+# # # postgres
 DATABASES = {
     'default': {
-        # sqlite
-        # 'ENGINE': 'django.db.backends.sqlite3',
-        # 'NAME': BASE_DIR / 'db.sqlite3',
-        # mysql
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'customAuth',
-        'HOST': 'localhost',
-        'USER': 'root',
-        'PASSWORD': 'mlk',
+        'ENGINE': 'django.db.backends.postgresql',
+         'HOST': env('DB_HOST'),
+        'NAME': env('DB_NAME'),
+        'USER': env('DB_USER'),
+        'PASSWORD': env('DB_PASS'),
+        'PORT': '',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/3.2/ref/settings/#auth-password-validators
@@ -172,11 +194,22 @@ DJOSER = {
     }
 }
 
+# CACHES = {
+#     "default": {
+#         "BACKEND": "django_redis.cache.RedisCache",
+#         "LOCATION": "redis://127.0.0.1:6379/2",
+#         "TIMEOUT": 10* 60,
+#         "OPTIONS": {
+#             "CLIENT_CLASS": "django_redis.client.DefaultClient",
+#         }
+#     }
+# }
+#
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/2",
-        "TIMEOUT": 10* 60,
+        "LOCATION": "redis://redis:6379/1",
+        "TIMEOUT": 10 * 60,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         }

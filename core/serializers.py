@@ -1,4 +1,5 @@
-from django.core.validators import RegexValidator, EmailValidator, MinValueValidator, MaxLengthValidator, MinLengthValidator
+from django.core.validators import RegexValidator, EmailValidator, MinValueValidator, MaxLengthValidator, \
+    MinLengthValidator
 from rest_framework import serializers
 from core.models import User, Token
 from rest_framework.fields import empty
@@ -7,9 +8,13 @@ from django.core import exceptions
 import django.contrib.auth.password_validation as validators
 from core.validations import CoreValidation
 
+
 def validate_password_and_repeat_password(data):
     if data.get('password') != data.get('password_repeat'):
         raise serializers.ValidationError({"dismatch password": "password and password repeat are not match"})
+
+    if data.get('old_password') is not None and data.get('old_password') == data.get('password'):
+        raise serializers.ValidationError({"Error": "password password should not same as old password"})
 
     # get the password from the data
     password = data.get('password')
@@ -32,7 +37,8 @@ class UserSerializer(serializers.Serializer):
 
 class UserRegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=30, required=True,
-                                     validators=[MinLengthValidator(8), MaxLengthValidator(30), CoreValidation.username_regx_validator()])
+                                     validators=[MinLengthValidator(8), MaxLengthValidator(30),
+                                                 CoreValidation.username_regx_validator()])
 
     password = serializers.CharField(max_length=255, write_only=True, required=True, validators=[MinLengthValidator(8)])
     password_repeat = serializers.CharField(max_length=255, write_only=True, required=True,
@@ -106,19 +112,19 @@ class UserLoginSerializer(serializers.ModelSerializer):
         fields = ['username', 'password']
 
 
-class UserSendOtpSerializer(serializers.Serializer):
+class SendOtpSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=255, write_only=True,
                                   validators=[MinLengthValidator(11), MaxLengthValidator(11),
                                               CoreValidation.phone_regx_validator()])
 
 
-class UserOtpValidateSerializer(serializers.Serializer):
+class OtpValidateSerializer(serializers.Serializer):
     otp_code = serializers.CharField(max_length=255, write_only=True, required=True)
 
 
 class UserChangePassSerializer(serializers.ModelSerializer):
     old_password = serializers.CharField(max_length=255, required=True, )
-    password = serializers.CharField(max_length=255, write_only=True, required=True,)
+    password = serializers.CharField(max_length=255, write_only=True, required=True, )
     password_repeat = serializers.CharField(max_length=255, write_only=True, required=True)
 
     class Meta:
