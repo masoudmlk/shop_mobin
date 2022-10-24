@@ -13,8 +13,8 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 from pathlib import Path
 from datetime import timedelta
 import os
-
 import environ
+import core
 BASE_DIR_ENVIRON = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 environ.Env.read_env(os.path.join(BASE_DIR_ENVIRON, '.env'))
 env = environ.Env(
@@ -42,6 +42,9 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'message',
+    # 'channels',
+    "daphne",
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -49,8 +52,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'django_extensions',
+    'django_filters',
+    # 'rest_framework.authtoken',
+    'knox',
     'debug_toolbar',
     'core',
+
 ]
 
 MIDDLEWARE = [
@@ -65,13 +73,17 @@ MIDDLEWARE = [
     "core.middlewares.CheckTokenMiddleware",
 ]
 
-INTERNAL_IPS = [
-    # ...
-    "127.0.0.1",
-    # ...
-]
+# INTERNAL_IPS = [
+#     # ...
+#     "127.0.0.1",
+#     # ...
+# ]
+if DEBUG:
+    import socket  # only if you haven't already imported this
+    hostname, _, ips = socket.gethostbyname_ex(socket.gethostname())
+    INTERNAL_IPS = [ip[: ip.rfind(".")] + ".1" for ip in ips] + ["127.0.0.1", "10.0.2.2"]
 
-ROOT_URLCONF = 'customAuth.urls'
+ROOT_URLCONF = 'shop.urls'
 
 TEMPLATES = [
     {
@@ -89,8 +101,18 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'customAuth.wsgi.application'
+# WSGI_APPLICATION = 'shop.wsgi.application'
+ASGI_APPLICATION = 'shop.asgi.application'
 
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            # "hosts": [('localhost', 63791)],
+            "hosts": ["redis://redis:6379/1"],
+        },
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
@@ -99,14 +121,14 @@ WSGI_APPLICATION = 'customAuth.wsgi.application'
 # DATABASES = {
 #     'default': {
 #         # sqlite
-#         # 'ENGINE': 'django.db.backends.sqlite3',
-#         # 'NAME': BASE_DIR / 'db.sqlite3',
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
 #         # mysql
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': 'customAuth',
-#         'HOST': 'localhost',
-#         'USER': 'root',
-#         'PASSWORD': 'mlk',
+#         # 'ENGINE': 'django.db.backends.mysql',
+#         # 'NAME': 'customAuth',
+#         # 'HOST': 'localhost',
+#         # 'USER': 'root',
+#         # 'PASSWORD': 'mlk',
 #     }
 # }
 
@@ -160,6 +182,10 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, "static")
+]
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/3.2/ref/settings/#default-auto-field
 
@@ -167,9 +193,18 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'COERCE_DECIMAL_TO_STRING': False,
-    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 10,
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'PAGE_SIZE': 2,
+    # 'DEFAULT_PARSER_CLASSES': (
+    #     'rest_framework.parsers.JSONParser',
+    #     'rest_framework.parsers.FormParser',
+    # ),
+    'DEFAULT_AUTHENTICATION_CLASSES': ('core.models.TokenAuthentication',),
+
+    # 'DEFAULT_AUTHENTICATION_CLASSES': (
+    #     # 'core.MultiTokenAuthentication',
+    # ),
     # 'DEFAULT_AUTHENTICATION_CLASSES': (
     #     # 'rest_framework.authentication.TokenAuthentication',
     #     'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -215,3 +250,10 @@ CACHES = {
         }
     }
 }
+
+# Base url to serve media files
+MEDIA_URL = '/media/'
+
+# Path where media is stored
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media/')
+

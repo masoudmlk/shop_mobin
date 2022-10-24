@@ -1,57 +1,37 @@
-from django.core.validators import RegexValidator, EmailValidator, MinValueValidator, MaxLengthValidator, \
-    MinLengthValidator
+from django.core.validators import MinValueValidator
+
 from rest_framework import serializers
-from core.models import User, Token
-from rest_framework.fields import empty
 
-from django.core import exceptions
-import django.contrib.auth.password_validation as validators
-from core.validations import CoreValidation
+from core.models import User
+from core.models import AuthToken, Product, ProductItem, Opinion, Score, Cart, CartItem, Shop
 
-
-def validate_password_and_repeat_password(data):
-    if data.get('password') != data.get('password_repeat'):
-        raise serializers.ValidationError({"dismatch password": "password and password repeat are not match"})
-
-    if data.get('old_password') is not None and data.get('old_password') == data.get('password'):
-        raise serializers.ValidationError({"Error": "password password should not same as old password"})
-
-    # get the password from the data
-    password = data.get('password')
-    errors = dict()
-    try:
-        # validate the password and catch the exception
-        validators.validate_password(password=password)
-    # the exception raised here is different than serializers.ValidationError
-    except exceptions.ValidationError as e:
-        errors['password'] = list(e.messages)
-    if errors:
-        raise serializers.ValidationError(errors)
-    return data
+from core.validations import username_validator, password_validator, email_validator,\
+    score_validator, validate_password_and_repeat_password
 
 
-class UserSerializer(serializers.Serializer):
+class UserSerializer(serializers.ModelSerializer):
+
+    id = serializers.CharField(read_only=True)
+
     class Meta:
-        fields = ['id', 'username', 'email', 'first_name', 'last_name']
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'phone', 'image']
 
 
 class UserRegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=30, required=True,
-                                     validators=[MinLengthValidator(8), MaxLengthValidator(30),
-                                                 CoreValidation.username_regx_validator()])
+                                     validators=username_validator())
 
-    password = serializers.CharField(max_length=255, write_only=True, required=True, validators=[MinLengthValidator(8)])
+    password = serializers.CharField(max_length=255, write_only=True, required=True,
+                                     validators=password_validator())
     password_repeat = serializers.CharField(max_length=255, write_only=True, required=True,
-                                            validators=[MinLengthValidator(8)])
-
-    phone = serializers.CharField(max_length=11, required=True, validators=[
-        CoreValidation.phone_regx_validator(),
-        MinLengthValidator(11), MaxLengthValidator(11),
-    ])
-
-    class Meta:
-        model = User
-        fields = ['username', 'password', 'password_repeat', 'phone']
+                                            validators=password_validator())
+    email = serializers.CharField(max_length=255, write_only=True, required=True,
+                                  validators=email_validator())
+    phone = serializers.CharField(max_length=11)
+    first_name = serializers.CharField(max_length=255, allow_blank=True, allow_null=True, required=False)
+    last_name = serializers.CharField(max_length=255, allow_blank=True, allow_null=True, required=False)
+    image = serializers.ImageField(allow_null=True, required=False)
 
     def validate_phone(self, phone):
         existing = User.objects.filter(phone=phone).first()
@@ -61,15 +41,6 @@ class UserRegisterSerializer(serializers.Serializer):
         return phone
 
     def validate_username(self, username):
-        # username = str(username)
-        # if len(username) < 4:
-        #     raise serializers.ValidationError(
-        #         {'invalid username': "username is to small"})
-        #
-        # if username.isnumeric():
-        #     raise serializers.ValidationError(
-        #         {'invalid username': "username can not be a number"})
-
         existing = User.objects.filter(username=username).first()
         if existing:
             raise serializers.ValidationError(
@@ -87,20 +58,18 @@ class UserRegisterSerializer(serializers.Serializer):
         return super().save(**kwargs)
 
 
-class TokenGeneralSerializer(serializers.ModelSerializer):
-    key = serializers.CharField(read_only=True)
-
-    class Meta:
-        model = Token
-        fields = ['key', 'user_agent', 'created']
+class TokenGeneralSerializer(serializers.Serializer):
+    token_key = serializers.CharField(max_length=255, read_only=True)
+    user_agent = serializers.CharField(max_length=255, read_only=True)
+    created = serializers.DateTimeField(read_only=True)
 
 
 class TokenSerializer(serializers.ModelSerializer):
-    key = serializers.CharField(read_only=True)
+    token_key = serializers.CharField(read_only=True)
 
     class Meta:
-        model = Token
-        fields = ['key']
+        model = AuthToken
+        fields = ['token_key']
 
 
 class UserLoginSerializer(serializers.ModelSerializer):
@@ -110,16 +79,6 @@ class UserLoginSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['username', 'password']
-
-
-class SendOtpSerializer(serializers.Serializer):
-    phone = serializers.CharField(max_length=255, write_only=True,
-                                  validators=[MinLengthValidator(11), MaxLengthValidator(11),
-                                              CoreValidation.phone_regx_validator()])
-
-
-class OtpValidateSerializer(serializers.Serializer):
-    otp_code = serializers.CharField(max_length=255, write_only=True, required=True)
 
 
 class UserChangePassSerializer(serializers.ModelSerializer):
@@ -135,27 +94,75 @@ class UserChangePassSerializer(serializers.ModelSerializer):
         return validate_password_and_repeat_password(data)
 
 
-class UserForgetPassSerializer(serializers.Serializer):
-    otp_code = serializers.CharField(max_length=255, required=True)
-    password = serializers.CharField(max_length=255, write_only=True, required=True)
-    password_repeat = serializers.CharField(max_length=255, write_only=True, required=True)
+class ProductSerializer(serializers.ModelSerializer):
+    display_type = serializers.CharField(source='get_type_display', read_only=True)
 
     class Meta:
-        model = User
-        fields = ['otp_code', 'password', 'password_repeat']
-
-    def validate(self, data):
-        return validate_password_and_repeat_password(data)
+        model = Product
+        fields = ['id', 'name', 'type', 'display_type', 'brand']
 
 
-class KillTokensSerialiser(serializers.Serializer):
+class OpinionSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
+    user_id = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    id = serializers.IntegerField(read_only=True)
 
-    def __init__(self, instance=None, data=empty, **kwargs):
-        super().__init__(instance, data, **kwargs)
-        self.fields['token_keys'] = serializers.MultipleChoiceField(choices=self.tokens())
+    class Meta:
+        model = Opinion
+        fields = ['id', 'product_id', 'user_id', 'description', 'created_at']
 
-    def tokens(self):
-        user_id = self.context.get('user_id')
-        request = self.context.get('request')
-        return [(row.key, str(row.created) + "-" + row.user_agent) for row in
-                Token.objects.filter(user_id=user_id).all()]
+
+class ScoreSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(read_only=True)
+    user_id = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    id = serializers.IntegerField(read_only=True)
+    score = serializers.IntegerField(validators=score_validator())
+
+    class Meta:
+        model = Opinion
+        fields = ['id', 'product_id', 'user_id', 'score', 'created_at']
+
+
+class CartItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=True)
+    quantity = serializers.IntegerField(required=True, validators=[MinValueValidator(1)])
+
+
+class removeCartItemSerializer(serializers.Serializer):
+    ids = serializers.ListField(allow_null=False, allow_empty=False, min_length=1)
+
+
+class CartItemWithProductSerializer(serializers.ModelSerializer):
+    product = ProductSerializer()
+    class Meta:
+        model = CartItem
+        fields = ['cart', 'product', 'quantity']
+
+
+class CartSerializer(serializers.ModelSerializer):
+    display_status = serializers.CharField(source='get_status_display', read_only=True)
+    items = CartItemWithProductSerializer(many=True)
+    user = UserSerializer()
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'user', 'items', 'status', 'display_status', 'created_at']
+
+
+class cartSerializer(serializers.ModelSerializer):
+    items = CartItemWithProductSerializer()
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'user', 'status', 'items',  'created_at']
+
+
+class TrackSerializer(serializers.ModelSerializer):
+    cart = CartSerializer()
+
+    class Meta:
+        model = Shop
+        fields = ['track', 'cart', 'user', 'created_at']
+

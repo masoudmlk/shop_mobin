@@ -1,334 +1,313 @@
-import uuid
-from django.contrib.auth import login as auth_login, logout as auth_logout
+from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.core.cache import cache
+from django.db.models.aggregates import Avg
+from django.db.models import F
+from django.db.models import Q
+
+
 from rest_framework.viewsets import GenericViewSet
-from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
-from rest_framework.serializers import Serializer
-from core.serializers import UserRegisterSerializer, UserSerializer, TokenSerializer, UserLoginSerializer, \
-    SendOtpSerializer, OtpValidateSerializer, UserChangePassSerializer, \
-    UserForgetPassSerializer, TokenGeneralSerializer, KillTokensSerialiser
-from core.models import User, Token
-from core.utils import SMSService, Client
+from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, CreateModelMixin, UpdateModelMixin
+from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.filters import SearchFilter, OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
+
+from core.serializers import UserRegisterSerializer, UserSerializer, UserLoginSerializer, UserChangePassSerializer
+from core.serializers import ProductSerializer, OpinionSerializer, ScoreSerializer, CartItemSerializer, \
+    removeCartItemSerializer, TrackSerializer, CartSerializer
+from core.models import AuthToken, User
+from core.models import Product, ProductItem, Score, Opinion, Cart, CartItem, Shop
+from core.handler import create_token, logout, create_update_score
 
 
-class UserAuthViewSet(GenericViewSet):
-    ACTIONS = {'register': 'register', 'login': 'login', 'logout': 'logout',
-               'validate_otp': 'validate_otp',
-               "change_pass": "change_pass", "forget_pass": "forget_pass"}
+class RegisterView(APIView):
+    permission_classes = (AllowAny,)
 
-    def get_queryset(self):
-        return []
-
-    def get_serializer_class(self):
-        if self.action == self.ACTIONS['register']:
-            return UserRegisterSerializer
-        elif self.action == self.ACTIONS['login']:
-            return UserLoginSerializer
-        elif self.action == self.ACTIONS['validate_otp']:
-            return OtpValidateSerializer
-        elif self.action == self.ACTIONS['change_pass']:
-            return UserChangePassSerializer
-        elif self.action == self.ACTIONS['forget_pass']:
-            return UserForgetPassSerializer
-        else:
-            return UserSerializer
-
-    @staticmethod
-    def get_permission_login_required():
-        return [
-            UserAuthViewSet.ACTIONS['logout'], UserAuthViewSet.ACTIONS['validate_otp'],
-            UserAuthViewSet.ACTIONS['change_pass'],
-        ]
-
-    def get_permissions(self):
-        permission_login_required = UserAuthViewSet.get_permission_login_required()
-        if self.action in permission_login_required:
-            return [IsAuthenticated()]
-        else:
-            return [AllowAny()]
-
-    def get_serializer_context(self):
-        return {'user_id': self.request.user.id}
-
-    @action(methods=['POST', 'GET'], detail=False, url_name='register')
-    def register(self, request):
-        # if users logged in,  they can not access to this request or page such as login or register
-        response = self.not_permission_logged_in_user(request)
-        if response is not None:
-            return response
-
+    def post(self, request):
         serializer = UserRegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        del serializer.validated_data['password_repeat']
+        with transaction.atomic():
+            user = User.objects.create_user(**serializer.validated_data)
+            token, token_key = create_token(user, request)
+            return Response({'token_key': token_key}, status=status.HTTP_200_OK)
 
-        # create user
-        username = serializer.validated_data.get('username')
-        password = serializer.validated_data.get('password')
-        phone = serializer.validated_data.get('phone')
-        user = User.objects.create_user(username, password=password, phone=phone)
-        user.save()
 
-        # create token
-        token = UserAuthViewSet._createToken(user, request)
-        return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
-
-    @action(methods=['POST', 'GET'], detail=False, url_name='login')
-    def login(self, request):
-        # if users logged in,  they can not access to this request or page
-        response = self.not_permission_logged_in_user(request)
-        if response is not None:
-            return response
-
+class LoginView(APIView):
+    def post(self, request):
         serializer = UserLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         # get data from serializer
         username = serializer.validated_data.get('username')
         password = serializer.validated_data.get('password')
 
-        # get user info and check conditions
-        user, isLogin = UserAuthViewSet.login_user(request, username=username, password=password)
-        if isLogin and isinstance(user, User):
-            token = UserAuthViewSet._createToken(user, request)
-            return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
+        user = get_object_or_404(User, username=username)
+        isLogin = user.check_password(password)
+
+        if isLogin:
+            token, token_key = create_token(user, request)
+            return Response({'token_key': token_key}, status=status.HTTP_200_OK)
+
         return Response({"Error": "there are not any user with this username and password"},
-                        status=status.HTTP_401_UNAUTHORIZED)
+                        status=status.HTTP_404_NOT_FOUND)
 
-    @action(methods=['GET'], detail=False, url_name='logout')
-    def logout(self, request):
-        if request.user.is_authenticated:
-            # remove token for this client and logout
-            userAgent = Client.get_user_agent(request)
-            Token.objects.filter(user_id=request.user.pk, user_agent=userAgent).delete()
-            auth_logout(request)
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        Response({"Error": "You are not login"}, status=status.HTTP_401_UNAUTHORIZED)
 
-    @action(methods=['POST'], detail=False, url_name='validate_otp')
-    def validate_otp(self, request):
-        cacheKey = OTPViewSet.get_phone_cache_key(request.user.phone)
-        serializer = OtpValidateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        input_otp_code = serializer.validated_data.get('otp_code')
-        if request.user.is_authenticated:
-            data = str(cache.get(cacheKey))
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
 
-            if data == input_otp_code:
-                user = User.objects.filter(username=request.user.username).first()
-                if user is not None and isinstance(user, User):
-                    user.is_verify_phone = True
-                    user.save()
+    def get(self, request):
+        logout(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-                    cache.delete(data)
-                    cache.delete(cacheKey)
 
-                    return Response(status=status.HTTP_200_OK)
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
 
-            return Response('Your code is invalid or it is expired', status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-        return Response("Authentication error", status=status.HTTP_401_UNAUTHORIZED)
-
-    @action(methods=['POST'], detail=False, url_name='change_pass')
-    def change_pass(self, request):
-        current_user = request.user
-        user_agent = Client.get_user_agent(request)
-
+    def post(self, request):
         serializer = UserChangePassSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         old_password = serializer.validated_data.get('old_password')
+        password = serializer.validated_data.get('password')
 
-        if current_user.is_authenticated and current_user.check_password(old_password):
-            current_user.set_password(serializer.validated_data.get('password'))
-            current_user.save()
-            token = Token.objects.filter(user=current_user, user_agent=user_agent).order_by('-created').first()
-            return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
+        current_user = request.user
+        if current_user.check_password(old_password):
 
-        return Response({"Error": "password is not correct or user not login"}, status=status.HTTP_401_UNAUTHORIZED)
+            with transaction.atomic():
+                current_user.set_password(password)
+                current_user.save()
 
-    @action(methods=['POST'], detail=False, url_name='forget_pass')
-    def forget_pass(self, request):
-        # check input data
-        serializer = UserForgetPassSerializer(data=request.data)
+                logout(request)
+
+                AuthToken.objects.filter(user=current_user).delete()
+                token, token_key = create_token(current_user, request)
+
+                return Response({'token_key': token_key}, status=status.HTTP_200_OK)
+
+        return Response({"Error": "password is not correct"}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+class UserInfo(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get_object(self):
+        return self.request.user
+
+
+class ProductView(GenericViewSet, ListModelMixin, RetrieveModelMixin):
+    permission_classes = [AllowAny]
+    pagination_class = PageNumberPagination
+    serializer_class = ProductSerializer
+    # filter_backends = [DjangoFilterBackend, SearchFilter]
+    # use for search pattern None use for exact search
+    __VALID_FILTER_PARAMS = {"name": 'icontains', 'brand': 'icontains', 'type': None}
+
+    def get_queryset(self):
+        products = Product.objects.select_related("productitem").filter(productitem__status_show=ProductItem.STATUS_SHOW)
+        filter_params = self._get_valid_filter_options()
+        if filter_params is not None:
+            products = products.filter(**filter_params)
+        return products
+
+    def _get_valid_filter_options(self):
+        dict_query_params = {}
+        for param, value in self.request.query_params.items():
+
+            if str(value).strip() == "" or value is None:
+                continue
+
+            if param in self.__VALID_FILTER_PARAMS.keys():
+                if self.__VALID_FILTER_PARAMS[param] is None:
+                    dict_query_params[param] = value
+                else:
+                    dict_query_params[f'{param}__{self.__VALID_FILTER_PARAMS[param]}'] = value
+
+        result = dict_query_params if len(dict_query_params) > 0 else None
+        return result
+
+
+class OpinionView(GenericViewSet, ListModelMixin):
+    permission_classes = [IsAuthenticated]
+    serializer_class = OpinionSerializer
+
+    def get_queryset(self):
+        product_id = self.kwargs.get('product_id')
+        product_exists = ProductItem.objects.filter(product_id=product_id, status_show=ProductItem.STATUS_SHOW).exists()
+        if product_exists:
+            queryset = Opinion.objects.filter(product_id=product_id, status_show=Opinion.STATUS_SHOW)
+        else:
+            queryset = []
+        return queryset
+
+    def add(self, request, product_id: str):
+
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # get data
-        otp_code = serializer.validated_data.get('otp_code')
-        phoneNumber = cache.get(otp_code)
-        password = serializer.validated_data.get("password")
 
-        if phoneNumber:
-            user, isLogin = UserAuthViewSet.login_user(request, phone=phoneNumber, is_verify_phone=1)
-            if isLogin and user is not None and isinstance(user, User):
-                # change password
-                user.set_password(password)
-                user.save()
-                # create token
-                token = UserAuthViewSet._createToken(user, request)
+        productItemInfo = {"product_id": product_id, "status_show": ProductItem.STATUS_SHOW}
+        get_object_or_404(ProductItem, **productItemInfo)
 
-                return Response(TokenSerializer(token).data, status=status.HTTP_200_OK)
+        description = serializer.validated_data.get("description")
+        opinion = Opinion.objects.create(user_id=request.user.pk, product_id=product_id, description=description)
 
-            return Response({"Error": "there is not any user with this phone number "
-                                      "or the phone number is not active"},
-                            status=status.HTTP_401_UNAUTHORIZED)
-        return Response({"Error": "this code is not valid."}, status=status.HTTP_408_REQUEST_TIMEOUT)
+        return Response(self.get_serializer(opinion).data, status=status.HTTP_201_CREATED)
 
-    @staticmethod
-    def login_user(request, user=None, username=None, password=None, phone=None, is_verify_phone=None) -> tuple:
-        # login by user
-        if user is not None and isinstance(user, User):
-            auth_login(request, user)
-            return user, True
 
-        # login by phone
-        if phone is not None:
-            if is_verify_phone is not None:
-                user = User.objects.filter(phone=phone, is_verify_phone=is_verify_phone).first()
+class ScoreView(GenericViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ScoreSerializer
+
+    def get_queryset(self):
+        product_id = self.kwargs.get('product_id')
+        product_exists = ProductItem.objects.filter(product_id=product_id, status_show=ProductItem.STATUS_SHOW).exists()
+        if product_exists:
+            queryset = Score.objects.filter(product_id=product_id)
+        else:
+            queryset = []
+
+        return queryset
+
+    def add(self, request, product_id: int):
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        productItemInfo = {"product_id": product_id, "status_show": ProductItem.STATUS_SHOW}
+        get_object_or_404(ProductItem, **productItemInfo)
+
+        score = serializer.validated_data.get("score")
+        score_object = create_update_score(request.user.pk, product_id, score)
+
+        return Response(self.get_serializer(score_object).data, status=status.HTTP_201_CREATED)
+
+    def avg_score(self, request, product_id: int):
+        productItemInfo = {"product_id": product_id, "status_show": ProductItem.STATUS_SHOW}
+        get_object_or_404(ProductItem, **productItemInfo)
+
+        qs = Score.objects.filter(product_id=product_id)
+
+        if qs is not None and len(qs) > 0:
+            score = qs.aggregate(avg_score=Avg('score'))
+            return Response(score, status=status.HTTP_200_OK)
+        return Response({"avg_score": 0}, status=status.HTTP_200_OK)
+
+
+class CartAction(GenericViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def add_list(self, request):
+        serializer = CartItemSerializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+
+        # step one get or create cart
+        cart = Cart.objects.filter(status=Cart.CURRENT_STATUS, user_id=request.user.pk).first()
+        if cart is None:
+            cart = Cart.objects.create(user_id=request.user.pk)
+
+        # step two create cart Items
+        if len(serializer.validated_data) > 0:
+            response_list = []
+            for item in serializer.validated_data:
+                with cache.lock(ProductItem.get_unique_key(item.get('id'))):
+
+                    with transaction.atomic():
+                        productItem = ProductItem.objects.filter(product_id=item.get('id'),
+                                                                 quantity__gte=item.get('quantity'),
+                                                                 status_show=ProductItem.STATUS_SHOW).first()
+
+                        # check if productItem exists we can order items on the other hand we can not buy items
+                        if productItem is not None:
+                            cartItem = CartItem.objects.filter(product_id=item.get("id"), cart_id=cart.pk).first()
+
+                            # create or update cart items
+                            if cartItem is None:
+                                CartItem.objects.create(product_id=item.get("id"), cart_id=cart.pk,
+                                                        quantity=item.get('quantity'))
+                            else:
+                                cartItem.quantity += item.get("quantity")
+                                cartItem.save()
+
+                            productItem.quantity -= item.get("quantity")
+                            productItem.save()
+
+                            response_list.append({'id': item.get('id'), "success": True,
+                                                  "message": "The product are added to the cart"})
+                        else:
+                            response_list.append({'id': item.get('id'), "success": False,
+                                                  "message": "The product does not exists or quantity lower than your requirement"})
+
+            return Response(response_list, status=status.HTTP_200_OK)
+        else:
+            return Response({'list': "This list is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def remove_list(self, request):
+        stringAll = "all"
+        input_ids = request.data.get("ids")
+        cart = Cart.objects.filter(status=Cart.CURRENT_STATUS).first()
+
+        if cart is not None:
+            if isinstance(input_ids, str) and str.lower(input_ids) == stringAll:
+                ids_tuple = CartItem.objects.filter(cart_id=cart.pk).values_list("product_id")
+                ids = [id_item[0] for id_item in ids_tuple]
             else:
-                user = User.objects.filter(phone=phone).first()
+                serializer = removeCartItemSerializer(data=request.data)
+                serializer.is_valid(raise_exception=True)
+                ids = serializer.validated_data.get("ids")
 
-            if user is not None and isinstance(user, User):
-                auth_login(request, user)
-                return user, True
-            return user, False
+            list_report = []
 
-        # login by username and password
-        isLogin = False
-        if username is not None and password is not None:
-            user = User.objects.filter(username=username).first()
-            if user is not None and isinstance(user, User) and user.check_password(password):
-                isLogin = True
-                auth_login(request, user)
+            for product_id in ids:
+                with transaction.atomic():
+                    cartItem = CartItem.objects.filter(cart_id=cart.pk, product_id=product_id).first()
+                    if cartItem is not None:
+                        ProductItem.objects.filter(product_id=product_id).update(quantity=F('quantity') + cartItem.quantity)
+                        cartItem.delete()
+                        list_report.append({'product_id': product_id, 'status_remove': 'success'})
+                    else:
+                        list_report.append({'product_id': product_id, 'status_remove': 'failed'})
 
-        return user, isLogin
+            return Response(list_report, status=status.HTTP_200_OK)
 
-    @staticmethod
-    def _createToken(user: User, request) -> Token:
-        if not isinstance(user, User):
-            raise {"Error": "user instance is not valid"}
-        user_agent = Client.get_user_agent(request)
-        token = Token.objects.create(user=user, user_agent=user_agent)
-        return token
+        else:
+            Cart.objects.create(status=Cart.CURRENT_STATUS, user_id=request.user.pk)
 
-    def not_permission_logged_in_user(self, request, message_get=None, message_post=None):
-        if message_post is None:
-            message_post = "You have already logged in"
-        if message_get is None:
-            message_get = "You can not access to this page"
-
-        if request.method == "GET":
-            if request.user.is_authenticated:
-                self.http_method_names = []
-            return Response({"detail": message_get}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-        if request.method == "POST" and request.user.is_authenticated:
-            self.http_method_names = []
-            return Response({"detail": message_post}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+        return Response({"detail": "something wrong"}, status=status.HTTP_404_NOT_FOUND)
 
 
-class OTPViewSet(GenericViewSet):
-    ACTIONS = {'send_otp': 'send_otp'}
-    TIMEOUT_CACHE_TOKEN = 4 * 60
-
-    @staticmethod
-    def get_phone_cache_key(key: str) -> str:
-        return f"phone-{key}"
+class TrackViewSet(GenericViewSet, ListModelMixin, RetrieveModelMixin):
+    serializer_class = TrackSerializer
+    lookup_field = 'track'
+    permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination
 
     def get_queryset(self):
-        return []
-
-    def get_serializer_class(self):
-        if self.action == self.ACTIONS['send_otp']:
-            return SendOtpSerializer
-        else:
-            return UserSerializer
-
-    @staticmethod
-    def get_permission_login_required():
-        return []
-
-    def get_permissions(self):
-        permission_login_required = UserAuthViewSet.get_permission_login_required()
-        if self.action in permission_login_required:
-            return [IsAuthenticated()]
-        else:
-            return [AllowAny()]
-
-    def get_serializer_context(self):
-        return {'user_id': self.request.user.id}
-
-    @action(methods=['POST'], detail=False, url_name='send_otp')
-    def send_otp(self, request):
-        serializer = SendOtpSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        from pprint import pprint
-
-        phone = serializer.validated_data.get('phone')
-        pprint("123333333")
-
-        user_exists = User.objects.filter(phone=phone).exists()
-        pprint("fdsfewfewfewfewfewwwwwwwwww")
-        if user_exists:
-            otp_code = OTPViewSet.generate_otp()
-            pprint("fewfwe")
-            sms_service = SMSService.get_object(phone)
-            sms_service.send_message(f"otp_code {otp_code} ".center(100, "-"))
-
-            cacheKey = OTPViewSet.get_phone_cache_key(phone)
-            cache.set(cacheKey, otp_code, self.TIMEOUT_CACHE_TOKEN)
-            cache.set(otp_code, phone, self.TIMEOUT_CACHE_TOKEN)
-
-            return Response(f"The message is sent. The code is {otp_code}.", status=status.HTTP_200_OK)
-
-        return Response({"Error": "there are not a user with this phone"}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
-
-    @staticmethod
-    def generate_otp():
-        return uuid.uuid4()
+        return Shop.objects.filter(user=self.request.user)
 
 
-class TokensViewSet(GenericViewSet):
-    ACTIONS = {'list_tokens': 'list_tokens', 'kill_tokens': 'kill_tokens'}
+class ShopView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return []
+    def get(self, request):
+        with transaction.atomic():
+            # change status current cart
+            cart = Cart.objects.filter(user_id=request.user.pk, status=Cart.CURRENT_STATUS).first()
 
-    def get_serializer_class(self):
-        if self.action == self.ACTIONS['kill_tokens']:
-            return KillTokensSerialiser
-        else:
-            return TokenGeneralSerializer
+            if cart is None:
+                cart = Cart.objects.create(user_id=request.user.pk, status=Cart.CURRENT_STATUS)
 
-    @staticmethod
-    def get_permission_login_required():
-        return [TokensViewSet.ACTIONS['list_tokens'], TokensViewSet.ACTIONS['kill_tokens']]
+            countItems = CartItem.objects.filter(cart=cart).count()
 
-    def get_permissions(self):
-        permission_login_required = UserAuthViewSet.get_permission_login_required()
-        if self.action in permission_login_required:
-            return [IsAuthenticated()]
-        else:
-            return [AllowAny()]
+            if countItems > 0:
+                cart.status = Cart.FINISHED_STATUS
+                cart.save()
+                # create a new cart
+                Shop.objects.create(user_id=request.user.pk, cart=cart)
 
-    def get_serializer_context(self):
-        return {'user_id': self.request.user.id}
+                return Response(CartSerializer(cart).data, status=status.HTTP_200_OK)
 
-    @action(methods=['GET'], detail=False, url_name='list_tokens')
-    def list_tokens(self, request):
-        queryset = Token.objects.filter(user=request.user).order_by('-created').all()
-        serializer = TokenGeneralSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    @action(methods=['POST'], detail=False, url_name='kill_tokens')
-    def kill_tokens(self, request):
-
-        context = {'user_id': request.user.pk}
-
-        # check is valid by serializer
-        serializer = KillTokensSerialiser(data=request.data, context=context)
-        serializer.is_valid(raise_exception=True)
-        # delete selected tokens
-        Token.objects.filter(key__in=serializer.validated_data.get('token_keys')).delete()
-        remindedTokens = Token.objects.filter(user_id=request.user.pk)
-
-        return Response(TokenSerializer(remindedTokens).data, status=status.HTTP_200_OK)
+            return Response({"detail": "Your cart is empty"}, status=status.HTTP_409_CONFLICT)

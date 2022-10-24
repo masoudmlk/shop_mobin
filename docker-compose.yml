@@ -2,24 +2,28 @@ version: '3'
 services:
   web:
     build: .
-    container_name: "customauth_python"
+    container_name: "shop_python"
 #    restart: always
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
     ports:
         - "8000:8000"
     volumes:
-        - .:/app
+        - .:/shop
     links:
         - db
     depends_on:
         - db
         - redis
     command: >
-      sh -c "python3 manage.py migrate &&
+      sh -c "
+             python3 manage.py makemigrations &&
+             python3 manage.py migrate &&
              python3 manage.py wait_for_db &&
              python3 manage.py runserver 0.0.0.0:8000"
 
   db:
-    container_name: "customauth_db"
+    container_name: "shop_db"
     image: "postgres:14-alpine"
     ports:
         - "54321:5432"
@@ -27,14 +31,14 @@ services:
       - .env
     volumes:
 #      - pgdata:/var/lib/postgresql/data
-      - /customauth_db/:/var/lib/postgresql/data
+      - /shop/:/var/lib/postgresql/data
 
   redis:
-    container_name: 'custom_redis'
+    container_name: 'shop_redis'
     hostname: redis
     image: "redis:5.0-alpine"
     ports:
-      - "6379:6379"
+      - "63791:6379"
     expose:
       - "6379"
     volumes:
