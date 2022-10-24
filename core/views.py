@@ -61,7 +61,7 @@ class LogoutView(APIView):
 
     def get(self, request):
         logout(request)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(status=status.HTTP_200_OK)
 
 
 class ChangePasswordView(APIView):
@@ -88,7 +88,7 @@ class ChangePasswordView(APIView):
 
                 return Response({'token_key': token_key}, status=status.HTTP_200_OK)
 
-        return Response({"Error": "password is not correct"}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({"Error": "password is incorrect"}, status=status.HTTP_409_CONFLICT)
 
 
 class UserInfo(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
