@@ -41,10 +41,6 @@ def password_validator():
     return [MinLengthValidator(8)]
 
 
-def score_validator():
-    return [MinValueValidator(1), MaxValueValidator(5)]
-
-
 def validate_password_and_repeat_password(data):
     if data.get('password') != data.get('password_repeat'):
         raise serializers.ValidationError({"dismatch password": "password and password repeat are not match"})

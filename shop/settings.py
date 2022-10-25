@@ -42,7 +42,6 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
-    'message',
     # 'channels',
     "daphne",
     'django.contrib.admin',
@@ -58,6 +57,7 @@ INSTALLED_APPS = [
     'knox',
     'debug_toolbar',
     'core',
+    'store',
 
 ]
 

@@ -18,15 +18,15 @@ import message.routing
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shop.settings')
 
-# application = get_asgi_application()
+application = get_asgi_application()
 
-application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
-    "websocket": AuthMiddlewareStack(
-        URLRouter(
-            message.routing.websocket_urlpatterns
-        )
-    ),
-
-})
+# application = ProtocolTypeRouter({
+#     "http": get_asgi_application(),
+#     "websocket": AuthMiddlewareStack(
+#         URLRouter(
+#             message.routing.websocket_urlpatterns
+#         )
+#     ),
+#
+# })
 
