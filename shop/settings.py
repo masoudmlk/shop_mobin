@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'debug_toolbar',
     'core',
     'store',
+    'message',
 
 ]
 

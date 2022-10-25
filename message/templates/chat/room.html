@@ -7,28 +7,28 @@
     <title>Chat Room</title>
 </head>
 <body>
+<h3>{{ username }}</h3>
 
-
-    <textarea id="chat-log" cols="100" rows="20"></textarea><br>
+<textarea id="chat-log" cols="100" rows="20">{% for message in messages %}({{ message.author.username }}){{message.content }}
+{% endfor %}</textarea><br>
     <input id="chat-message-input" type="text" size="100"><br>
     <input id="chat-message-submit" type="button" value="Send">
-    {{ room_name|json_script:"room-name" }}
+    {{ group|json_script:"group_id" }}
     <script src="{% static 'reconnecting-websocket.js' %}"></script>
     <script>
-        const roomName = JSON.parse(document.getElementById('room-name').textContent);
+        const group_id = JSON.parse(document.getElementById('group_id').textContent);
         var uesrname =  {{ username }}
         const route = 'ws://'
             + window.location.host
             + '/ws/chat/'
-            + roomName
+            + group_id
             + '/'
-        console.log(roomName, typeof roomName)
         console.log(route)
         const chatSocket = new ReconnectingWebSocket(route);
             chatSocket.onopen = function (e){
             chatSocket.send(JSON.stringify({
                 'command': "fetch_message",
-                'room_name' : roomName,
+                'room_name' : group_id,
             }));
 
 
@@ -36,7 +36,10 @@
         chatSocket.onmessage = function(e) {
             const data = JSON.parse(e.data);
             let message = data['message']
+            let command = data['command']
+            let username = data['username']
 
+            /***
             if(Array.isArray(message)){
                 for(let i=message.length-1; i>=0; i--) {
                         document.querySelector('#chat-log').value += (message[i]['content'] + '\n');
@@ -44,6 +47,11 @@
             }else{
                 document.querySelector('#chat-log').value += (message['content'] + '\n');
             }
+             ***/
+            if(command === "new_message" && username!= null && message != null){
+                document.querySelector('#chat-log').value += ("(" + username + ")"+message + '\n');
+            }
+
         };
 
         chatSocket.onclose = function(e) {
@@ -64,7 +72,7 @@
                 'message': message,
                 'command': "new_message",
                 'username': {{ username }},
-                'room_name': roomName,
+                'room_name': group_id,
             }));
             messageInputDom.value = '';
         };

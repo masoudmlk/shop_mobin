@@ -6,8 +6,8 @@
 </head>
 <body>
 
-    {% for chat_room in chat_rooms %}
-        <a href="http://127.0.0.1:8000/chat/{{ chat_room.room_name }}">{{ chat_room.room_name }}</a><br>
+    {% for group in groups %}
+        <a href="http://127.0.0.1:8000/message/message-page/{{ group.id }}">{{ group.name }}</a><br>
     {% endfor %}
 
 {#    {% for chat_room in chat_rooms %}#}
