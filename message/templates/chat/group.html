@@ -8,6 +8,7 @@
 </head>
 <body>
 <h3>{{ username }}</h3>
+<h2><a href="{{ left_group_link }}">left group</a></h2>
 
 <textarea id="chat-log" cols="100" rows="20">{% for message in messages %}({{ message.author.username }}){{message.content }}
 {% endfor %}</textarea><br>
@@ -51,6 +52,7 @@
             if(command === "new_message" && username!= null && message != null){
                 document.querySelector('#chat-log').value += ("(" + username + ")"+message + '\n');
             }
+            console.log(data['message'])
 
         };
 

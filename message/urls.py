@@ -22,16 +22,12 @@ urlpatterns = [
     path("groups/sendToAll/", views.SendMessageToGroups.as_view()),
 
     path('message-page/', views.index, name='message_index'),
-    path("message-page/<int:pk>/", views.room, name='massage_page'),
+
+    path("message-page/<int:pk>/", views.group, name='group_page'),
+    path('group/left/<int:pk>/', views.left_group, name='left_group'),
+
     path("login/<str:username>/", views.login),
-    path("logout/<str:username>/", views.logout),
+    path("logout/", views.logout),
 
 ]
 urlpatterns += router.urls
-
-
-# urlpatterns = [
-#     # path('', index, name='message_index'),
-#     # path("<str:room_name>/", room, name='room_index'),
-#     path("badword/", BadWordViewSet.as_view({{'get': 'list'}}), name='badword')
-# ]
