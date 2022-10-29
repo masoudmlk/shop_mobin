@@ -8,10 +8,12 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, CreateMode
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 
-from message.serializers import BadWordSerializer, GroupSerializer, UsernameListSerializer, MessageToGroupsSerializer, SimpleGroupSerializer
+from message.serializers import BadWordSerializer, GroupSerializer, UsernameListSerializer, MessageToGroupsSerializer, \
+    SimpleGroupSerializer
 from message.models import BadWord, Group, Message
 from django.contrib.auth import get_user_model
 from django.contrib.auth import login as auth_login, logout as auth_logout
+
 User = get_user_model()
 
 from django.shortcuts import render
@@ -23,9 +25,9 @@ from django.http import HttpResponseRedirect, HttpResponse
 from message.consumers import ChatConsumer
 from django.contrib.auth.decorators import login_required
 
+
 @login_required
 def index(request):
-
     user = request.user
     groups = Group.objects.filter(members=user, active=True)
     left_links = {}
@@ -34,6 +36,7 @@ def index(request):
     context = {'groups': groups, "left_group_links": left_links}
 
     return render(request, "chat/index.html", context)
+
 
 @login_required
 def group(request, pk):
@@ -51,8 +54,8 @@ def group(request, pk):
         return render(request, "chat/group.html", context)
     return HttpResponse("404", status.HTTP_404_NOT_FOUND)
 
-def login(request, username):
 
+def login(request, username):
     user = User.objects.filter(username=username).first()
     auth_login(request, user)
     return HttpResponseRedirect(reverse('message_index'))
@@ -62,9 +65,9 @@ def logout(request):
     auth_logout(request)
     return HttpResponseRedirect(reverse('message_index'))
 
+
 @login_required
 def left_group(request, pk: int) -> HttpResponse:
-
     group = Group.objects.filter(Group, pk=pk).first()
     if group is not None:
         user = request.user
@@ -87,7 +90,8 @@ class GroupViewSet(ModelViewSet):
     serializer_class = GroupSerializer
 
     def get_queryset(self):
-        return Group.objects.filter(active=True, creator=self.request.user).select_related('creator').prefetch_related('members')
+        return Group.objects.filter(active=True, creator=self.request.user).select_related('creator').prefetch_related(
+            'members')
 
     def get_serializer_context(self):
         return {'current_user': self.request.user}
@@ -134,7 +138,7 @@ class RemoveFromGroup(APIView):
 
 
 class SendMessageToGroups(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
 
     def post(self, request):
         serializer = MessageToGroupsSerializer(data=request.data)
@@ -158,5 +162,3 @@ class SendMessageToGroups(APIView):
         qs = Group.objects.filter(active=True).select_related('creator')
         serializer = SimpleGroupSerializer(qs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-
