@@ -10,4 +10,3 @@ def add_creator_to_group(sender, **kwargs):
         group_object = kwargs['instance']
         if isinstance(group_object, Group):
             group_object.members.add(group_object.creator)
-           
