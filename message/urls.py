@@ -19,7 +19,7 @@ urlpatterns = [
     path("groups/join/<str:group_id>/", views.JoinGroup.as_view()),
     path("groups/remove/<str:group_id>/", views.RemoveFromGroup.as_view()),
     path("groups/sendToAll/", views.SendMessageToGroups.as_view()),
-    path("groups/sendToAll/", views.SendMessageToGroups.as_view()),
+    # path("groups/sendToAll/", views.SendMessageToGroups.as_view()),
 
     path('message-page/', views.index, name='message_index'),
 

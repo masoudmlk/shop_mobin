@@ -26,11 +26,6 @@
             + '/'
         console.log(route)
         const chatSocket = new ReconnectingWebSocket(route);
-            chatSocket.onopen = function (e){
-            chatSocket.send(JSON.stringify({
-                'command': "fetch_message",
-                'room_name' : group_id,
-            }));
 
 
         }
@@ -40,15 +35,6 @@
             let command = data['command']
             let username = data['username']
 
-            /***
-            if(Array.isArray(message)){
-                for(let i=message.length-1; i>=0; i--) {
-                        document.querySelector('#chat-log').value += (message[i]['content'] + '\n');
-                    }
-            }else{
-                document.querySelector('#chat-log').value += (message['content'] + '\n');
-            }
-             ***/
             if(command === "new_message" && username!= null && message != null){
                 document.querySelector('#chat-log').value += ("(" + username + ")"+message + '\n');
             }

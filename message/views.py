@@ -21,13 +21,13 @@ import json
 from django.urls import reverse
 from django.http import HttpResponseRedirect, HttpResponse
 from message.consumers import ChatConsumer
+from django.contrib.auth.decorators import login_required
 
-
-
+@login_required
 def index(request):
 
     user = request.user
-    groups = Group.objects.filter(members=user)
+    groups = Group.objects.filter(members=user, active=True)
     left_links = {}
     for group in groups:
         left_links[group.pk] = reverse('left_group', kwargs={"pk": group.pk})
@@ -35,10 +35,10 @@ def index(request):
 
     return render(request, "chat/index.html", context)
 
-
+@login_required
 def group(request, pk):
     username = request.user.username
-    group = get_object_or_404(Group, pk=pk)
+    group = Group.objects.filter(pk=pk, members=request.user, active=True).first()
 
     if group is not None:
         messages = Message.objects.filter(related_group=group).select_related('author').order_by('created_at')
@@ -49,7 +49,7 @@ def group(request, pk):
             'left_group_link': reverse('left_group', kwargs={"pk": group.pk}),
         }
         return render(request, "chat/group.html", context)
-
+    return HttpResponse("404", status.HTTP_404_NOT_FOUND)
 
 def login(request, username):
 
@@ -60,16 +60,17 @@ def login(request, username):
 
 def logout(request):
     auth_logout(request)
-    info = {"pk": 1}
-    return HttpResponseRedirect(reverse('group_page', kwargs={'pk': 1}))
-
-
-def left_group(request, pk:int) -> HttpResponse:
-
-    group = get_object_or_404(Group, pk=pk)
-    user = request.user
-    group.members.remove(user)
     return HttpResponseRedirect(reverse('message_index'))
+
+@login_required
+def left_group(request, pk: int) -> HttpResponse:
+
+    group = Group.objects.filter(Group, pk=pk).first()
+    if group is not None:
+        user = request.user
+        group.members.remove(user)
+        return HttpResponseRedirect(reverse('message_index'))
+    return HttpResponse("404", status.HTTP_404_NOT_FOUND)
 
 
 class BadWordViewSet(ModelViewSet):
