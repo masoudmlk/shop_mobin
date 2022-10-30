@@ -27,8 +27,6 @@
         console.log(route)
         const chatSocket = new ReconnectingWebSocket(route);
 
-
-        }
         chatSocket.onmessage = function(e) {
             const data = JSON.parse(e.data);
             let message = data['message']

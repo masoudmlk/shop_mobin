@@ -5,10 +5,9 @@ import re
 
 class FilterText:
 
-    def __init__(self, input_text, force_update=False, regex='[\u064B-\u0652\u06D4\u0670\u0674\u06D5-\u06ED]+'):
+    def __init__(self, input_text, force_update=False):
         self.force_update = force_update
         self.input_text = input_text
-        self._regex_compiler = re.compile(regex, re.UNICODE)
 
     @property
     def badword_list(self):
@@ -41,20 +40,6 @@ class FilterText:
 
         badwords = self.get_badwords()
         temp = self.input_text
-
-        temp_list = str(temp).split(" ")
-        return_list = []
-
-        for word in temp_list:
-            word_removed_special_chars = self.regex.sub('', word)
-            if word_removed_special_chars in badwords:
-                return_list.append(len(word) * "*")
-            else:
-                return_list.append(word)
-
-        ret = " ".join(return_list)
-        return ret
-
-    @property
-    def regex(self):
-        return self._regex_compiler
+        for badword in badwords:
+            temp = re.sub(badword, len(badword)*"*", temp)
+        return temp

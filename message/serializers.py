@@ -35,8 +35,8 @@ class GroupSerializer(serializers.ModelSerializer):
         return super().save(**kwargs)
 
 
-class UsernameListSerializer(serializers.Serializer):
-    username_list = serializers.ListField(allow_null=False, allow_empty=False, min_length=1)
+class IdListSerializer(serializers.Serializer):
+    ids = serializers.ListField(allow_null=False, allow_empty=False, min_length=1, max_length=10)
 
 
 class MessageToGroupsSerializer(serializers.Serializer):

@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-
+from django.db import IntegrityError
 from rest_framework.viewsets import GenericViewSet, ModelViewSet
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
@@ -8,8 +8,8 @@ from rest_framework.mixins import ListModelMixin, RetrieveModelMixin, CreateMode
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 
-from message.serializers import BadWordSerializer, GroupSerializer, UsernameListSerializer, MessageToGroupsSerializer, \
-    SimpleGroupSerializer
+from message.serializers import BadWordSerializer, GroupSerializer, IdListSerializer, MessageToGroupsSerializer, \
+    SimpleGroupSerializer, UserSerializer
 from message.models import BadWord, Group, Message
 from django.contrib.auth import get_user_model
 from django.contrib.auth import login as auth_login, logout as auth_logout
@@ -101,40 +101,37 @@ class JoinGroup(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, group_id):
-        serializer = UsernameListSerializer(data=request.data)
+        serializer = IdListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        username_list = serializer.validated_data.get("username_list")
-        group_filter = {'pk': group_id, 'creator': self.request.user}
+        ids = serializer.validated_data.get("ids")
+        group_filter = {'pk': group_id, 'creator': self.request.user, 'active': True}
         group = get_object_or_404(Group, **group_filter)
-        list_response = []
-        for username in username_list:
-            user = User.objects.filter(username=username).first()
-            if user is not None:
-                group.members.add(user)
-                list_response.append({'username': username, 'status': 'success'})
-            else:
-                list_response.append({'username': username, 'status': 'failed'})
-        return Response(list_response, status=status.HTTP_200_OK)
+        through_model = group.members.through
+        through_objects = []
+
+        for id in ids:
+            through_objects.append(through_model(user_id=id, group_id=group.id))
+        # todo it has error when user enter a user_id that does not exists
+        try:
+            through_model.objects.bulk_create(through_objects)
+        except IntegrityError:
+            print("Error in running bulk create")
+            return Response({"detail": "there are invalid ids among id list"}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response(status=status.HTTP_200_OK)
 
 
 class RemoveFromGroup(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, group_id):
-        serializer = UsernameListSerializer(data=request.data)
+        serializer = IdListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        username_list = serializer.validated_data.get("username_list")
+        ids = serializer.validated_data.get("ids")
         group_filter = {'pk': group_id, 'creator': self.request.user}
         group = get_object_or_404(Group, **group_filter)
-        list_response = []
-        for username in username_list:
-            user = User.objects.filter(username=username).first()
-            if user is not None:
-                group.members.remove(user)
-                list_response.append({'username': username, 'status': 'removed'})
-            # else:
-            #     list_response.append({'username': username, 'status': 'failed to remove form group'})
-        return Response(list_response, status=status.HTTP_200_OK)
+        group.members.remove(*ids)
+        return Response(status=status.HTTP_200_OK)
 
 
 class SendMessageToGroups(APIView):
